@@ -3,6 +3,7 @@ import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { LABEL_BATCH_MAX } from '@/lib/kfcLabels';
 import { StockError } from '@/lib/kfcInventory';
 import { pushCompleted, isWooShop } from '@/lib/kfcWoo';
+import { OWN_SHOP, pushOwnShipped } from '@/lib/kfcOwnShop';
 import type { CrmUser } from '@/lib/crmSession';
 import { sampleOrders, type SampleOrder, type OrderStatus } from '@/lib/kfcSampleOrders';
 
@@ -40,16 +41,24 @@ export async function fetchAll<T>(build: (from: number, to: number) => PromiseLi
 const ORDER_COLUMNS = 'id, shop, woo_order_id, number, status, fulfilment, created_at, paid_at, shipped_at, shop_completed_at, country, total_incl_cents, total_excl_cents, shipping_incl_cents, ship_name, ship_company, ship_street, ship_postcode, ship_city, ship_phone, ship_email, carrier, tracking_code, label_url, label_created_at';
 const LINE_COLUMNS = 'id, sku, article_code, name, quantity, reserved, picked, state, unit_incl_cents';
 
+// Existence checks read one row instead of counting the table: an exact count
+// over the jsonb filter scanned every order on each dashboard and orders view.
 export async function shopOrdersExist(): Promise<boolean> {
-  const { count } = await db().from('kfc_shop_orders').select('id', { count: 'exact', head: true });
-  return (count ?? 0) > 0;
+  const { data } = await db().from('kfc_shop_orders').select('id').limit(1);
+  return (data?.length ?? 0) > 0;
 }
 
-export async function listShopOrders(filter: { shop?: string; status?: string; q?: string; page: number; limit: number }) {
+export async function sampleShopOrdersExist(): Promise<boolean> {
+  const { data } = await db().from('kfc_shop_orders').select('id').contains('raw', { source: 'sample' }).limit(1);
+  return (data?.length ?? 0) > 0;
+}
+
+export async function listShopOrders(filter: { shop?: string; status?: string; fulfilment?: Fulfilment; q?: string; page: number; limit: number }) {
   let query = db().from('kfc_shop_orders').select(`${ORDER_COLUMNS}, kfc_shop_order_lines (${LINE_COLUMNS})`, { count: 'exact' })
     .order('created_at', { ascending: false }).range((filter.page - 1) * filter.limit, filter.page * filter.limit - 1);
   if (filter.shop) query = query.eq('shop', filter.shop);
   if (filter.status) query = query.eq('status', filter.status);
+  if (filter.fulfilment) query = query.eq('fulfilment', filter.fulfilment);
   if (filter.q) query = query.ilike('number', `%${filter.q.replace(/[%_]/g, '')}%`);
   const { data, error, count } = await query;
   if (error) throw new StockError(`Bestellingen lezen mislukt: ${error.message}`, 500);
@@ -65,6 +74,8 @@ function toOrder(row: Record<string, unknown>): ShopOrder {
 
 /** Detail with, per line, the best shelf to pick from and the article's availability. */
 export async function getShopOrder(id: string): Promise<ShopOrder | null> {
+  // A stale or mistyped link is "not found", not a database error.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
   const { data, error } = await db().from('kfc_shop_orders').select(`${ORDER_COLUMNS}, kfc_shop_order_lines (${LINE_COLUMNS})`).eq('id', id).maybeSingle();
   if (error) throw new StockError(`Bestelling lezen mislukt: ${error.message}`, 500);
   if (!data) return null;
@@ -74,6 +85,18 @@ export async function getShopOrder(id: string): Promise<ShopOrder | null> {
 }
 
 export { LABEL_BATCH_MAX };
+
+export async function shopReturnHistory(lines: ShopLine[]) {
+  const ids = lines.filter((line) => line.state === 'shipped').map((line) => line.id);
+  const quantities = new Map<string, number>();
+  const moves = ids.length ? await fetchAll<{ id: number; order_line_id: string; delta: number; reason: 'sale' | 'return'; created_at: string }>((from, to) =>
+    db().from('kfc_stock_moves').select('id, order_line_id, delta, reason, created_at').in('order_line_id', ids)
+      .in('reason', ['sale', 'return']).order('created_at', { ascending: false }).order('id').range(from, to)) : [];
+  for (const move of moves) {
+    quantities.set(move.order_line_id, (quantities.get(move.order_line_id) ?? 0) - move.delta);
+  }
+  return { quantities, returns: moves.filter((move) => move.reason === 'return') };
+}
 
 /** Several orders at once, for the bulk label sheet. Keeps the order of `ids`. */
 export async function getShopOrdersByIds(ids: string[]): Promise<ShopOrder[]> {
@@ -91,8 +114,8 @@ async function decorate(lines: ShopLine[]) {
   const codes = [...new Set(lines.map((l) => l.article_code).filter((c): c is string => !!c))];
   if (!codes.length) return;
   const [levels, positions] = await Promise.all([
-    db().from('kfc_stock_levels').select('article_code, quantity, kfc_locations (shelf, box, kind)').in('article_code', codes).order('quantity', { ascending: false }),
-    db().from('kfc_stock_position').select('article_code, available, incoming').in('article_code', codes),
+    db().from('kfc_stock_levels').select('article_code, quantity, kfc_locations!inner (shelf, box, kind)').in('article_code', codes).is('kfc_locations.technician_id', null).order('quantity', { ascending: false }),
+    db().from('kfc_webshop_position').select('article_code, available, incoming').in('article_code', codes),
   ]);
   const shelfOf = new Map<string, { shelf: string; box: string }>();
   for (const row of levels.data ?? []) {
@@ -110,9 +133,10 @@ async function decorate(lines: ShopLine[]) {
 }
 
 /** Paid, not yet shipped, oldest first: what the warehouse works through. */
-export async function pickList(): Promise<ShopOrder[]> {
-  const { data, error } = await db().from('kfc_shop_orders').select(`${ORDER_COLUMNS}, kfc_shop_order_lines (${LINE_COLUMNS})`)
+export async function pickList(sampleOnly = false): Promise<ShopOrder[]> {
+  const query = db().from('kfc_shop_orders').select(`${ORDER_COLUMNS}, kfc_shop_order_lines (${LINE_COLUMNS})`)
     .eq('status', 'processing').in('fulfilment', ['open', 'picked']).order('created_at').limit(500);
+  const { data, error } = await (sampleOnly ? query.eq('raw->>source', 'sample') : query);
   if (error) throw new StockError(`Picklijst lezen mislukt: ${error.message}`, 500);
   const orders = (data ?? []).map(toOrder);
   await decorate(orders.flatMap((o) => o.lines));
@@ -136,13 +160,17 @@ export async function markPicked(lineId: string, picked: boolean): Promise<strin
 export async function shipOrder(id: string, key: string, user: CrmUser): Promise<{ writeback: 'done' | 'pending' }> {
   const { error } = await db().rpc('kfc_ship_order', { p_order: id, p_key: key, p_created_by: user.id });
   if (error) {
+    if (error.message.includes('KFC_CENTRAL_STOCK_REQUIRED')) throw new StockError('Onvoldoende voorraad in het centrale magazijn.', 409);
     if (error.message.includes('KFC_NOT_PAID')) throw new StockError('Deze bestelling is niet betaald (status is niet processing).', 409);
+    if (error.message.includes('KFC_STOCK_RESERVED_FOR_JOB')) throw new StockError('Voorraad is gereserveerd voor een klus.', 409);
     if (error.message.includes('KFC_NO_ORDER')) throw new StockError('Bestelling niet gevonden.', 404);
     throw new StockError(`Verzenden mislukt: ${error.message}`, 500);
   }
-  const order = await db().from('kfc_shop_orders').select('shop, woo_order_id').eq('id', id).single();
+  const order = await db().from('kfc_shop_orders').select('shop, woo_order_id, number').eq('id', id).single();
   try {
-    if (order.data && isWooShop(order.data.shop)) await pushCompleted(order.data.shop, order.data.woo_order_id);
+    // Our own webshop sits in this same database: the write-back is a status update on public.orders.
+    if (order.data?.shop === OWN_SHOP) await pushOwnShipped(order.data.number);
+    else if (order.data && isWooShop(order.data.shop)) await pushCompleted(order.data.shop, order.data.woo_order_id);
     return { writeback: 'done' };
   } catch {
     return { writeback: 'pending' }; // the nightly reconcile retries
@@ -150,18 +178,33 @@ export async function shipOrder(id: string, key: string, user: CrmUser): Promise
 }
 
 /** The dashboard's shape: the last `days` days of orders, as SampleOrder. */
+/**
+ * Orders for the dashboard: only the columns it reads, and only the window it
+ * needs (the period, the period before it, and 90 days for "not sold"). The
+ * first page also returns the total, so the remaining pages load in parallel
+ * instead of one round trip after another.
+ */
 export async function ordersForDashboard(days = 120): Promise<SampleOrder[]> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const data = await fetchAll<Record<string, unknown>>((from, to) => db().from('kfc_shop_orders').select(`${ORDER_COLUMNS}, kfc_shop_order_lines (${LINE_COLUMNS})`).gte('created_at', since).order('created_at', { ascending: false }).range(from, to));
-  return data.map((row) => {
-    const order = toOrder(row);
-    return {
-      number: order.number, shop: order.shop as SampleOrder['shop'], created: order.created_at,
-      status: (['processing', 'completed', 'on-hold', 'cancelled', 'refunded'].includes(order.status) ? order.status : 'cancelled') as OrderStatus,
-      country: order.country ?? '', shippingIncl: order.shipping_incl_cents, totalIncl: order.total_incl_cents, totalExcl: order.total_excl_cents,
-      lines: order.lines.map((line) => ({ sku: line.sku, name: line.name, image: '', quantity: line.quantity, unitIncl: line.unit_incl_cents ?? 0 })),
-    };
-  });
+  const columns = 'number, shop, created_at, status, country, total_incl_cents, total_excl_cents, shipping_incl_cents, kfc_shop_order_lines (sku, name, quantity, unit_incl_cents)';
+  const page = 1000;
+  const query = (from: number, count = false) => db().from('kfc_shop_orders').select(columns, count ? { count: 'exact' } : undefined)
+    .gte('created_at', since).order('created_at', { ascending: false }).order('id').range(from, from + page - 1);
+  const first = await query(0, true);
+  if (first.error) throw new StockError(`Lezen mislukt: ${first.error.message}`, 500);
+  const total = Math.min(first.count ?? 0, 50000);
+  const rest = await Promise.all(Array.from({ length: Math.max(0, Math.ceil(total / page) - 1) }, (_, i) => query((i + 1) * page)));
+  const failed = rest.find((result) => result.error);
+  if (failed?.error) throw new StockError(`Lezen mislukt: ${failed.error.message}`, 500);
+  type Row = { number: string; shop: string; created_at: string; status: string; country: string | null; total_incl_cents: number; total_excl_cents: number; shipping_incl_cents: number; kfc_shop_order_lines: { sku: string; name: string; quantity: number; unit_incl_cents: number | null }[] | null };
+  const rows = [first, ...rest].flatMap((result) => (result.data ?? []) as unknown as Row[]);
+  return rows.map((order) => ({
+    number: order.number, shop: order.shop as SampleOrder['shop'], created: order.created_at,
+    status: (['processing', 'completed', 'on-hold', 'cancelled', 'refunded'].includes(order.status) ? order.status : 'cancelled') as OrderStatus,
+    country: order.country ?? '', shippingIncl: order.shipping_incl_cents, totalIncl: order.total_incl_cents, totalExcl: order.total_excl_cents,
+    lines: (order.kfc_shop_order_lines ?? []).sort((a, b) => a.name.localeCompare(b.name))
+      .map((line) => ({ sku: line.sku, name: line.name, image: '', quantity: line.quantity, unitIncl: line.unit_incl_cents ?? 0 })),
+  }));
 }
 
 /**

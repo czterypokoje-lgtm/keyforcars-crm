@@ -7,13 +7,15 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { createPortal } from 'react-dom';
 import { Barcode, Camera, ChevronLeft, ChevronRight, ClipboardList, Images, Package, Plus, Printer, Save, ScanLine, X } from 'lucide-react';
-import { EMPTY_STOCK, STOCK_OPERATIONS, stockChange, type StockArticle, type StockBin, type StockMove } from '@/lib/keyforcarsStock';
+import { EMPTY_STOCK, STOCK_OPERATIONS, moveLabel, stockChange, type StockArticle, type StockBin, type StockMove } from '@/lib/keyforcarsStock';
 import { labelCode } from './StockLabel';
+import { BRAND } from '@/config/install';
+import SalePriceEditor from './SalePriceEditor';
 import ProductFacts from './ProductFacts';
 import { inventoryCategory } from './inventoryCategories';
 import { inventoryHref, inventoryViews, type InventoryView } from './inventoryViews';
 import { articleIndex, trustedUnknownCode } from '@/lib/stockBulkCount';
-import { usePreviewLanguage } from '../PreviewLanguage';
+import { PreviewProductName, usePreviewLanguage } from '../PreviewLanguage';
 import styles from './keyforcars.module.css';
 import StockHelp from './StockHelp';
 import './stockPrint.css';
@@ -63,7 +65,7 @@ function saveLabelSize(size: LabelSize) {
   window.dispatchEvent(new Event(LABEL_SIZE_KEY));
 }
 
-export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInvoice }: { initialCatalog: StockArticle[]; demo: boolean; view: InventoryView; canLinkInvoice: boolean }) {
+export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInvoice, canEditPrice }: { canEditPrice: boolean; initialCatalog: StockArticle[]; demo: boolean; view: InventoryView; canLinkInvoice: boolean }) {
   const { t, english } = usePreviewLanguage();
   const [state, setState] = useState(EMPTY_STOCK);
   /** Physical · unusable · reserved · available · incoming per article (ledger install only). */
@@ -284,7 +286,7 @@ export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInv
   }
 
   function shareMovement({ move, article, file }: NonNullable<typeof lastMovement>) {
-    const text = `KeyForCars · ${t(STOCK_OPERATIONS[move.operation as Operation])}\n${article.name} (${article.sku || article.id})\nAantal: ${Math.abs(move.delta)}${move.shelf ? `\nLocatie: ${move.shelf} / ${move.box}` : ''}${move.note ? `\n${move.note}` : ''}\nReferentie: ${move.id}`;
+    const text = `${BRAND.name} · ${t(moveLabel(move.operation))}\n${article.name} (${article.sku || article.id})\nAantal: ${Math.abs(move.delta)}${move.shelf ? `\nLocatie: ${move.shelf} / ${move.box}` : ''}${move.note ? `\n${move.note}` : ''}\nReferentie: ${move.id}`;
     if (file && navigator.canShare?.({ files: [file] })) {
       void navigator.share({ text, files: [file] }).catch((error) => {
         if (error.name !== 'AbortError') setNotice('Delen mislukt. Gebruik de WhatsApp-tekst en voeg de foto handmatig toe.');
@@ -408,7 +410,7 @@ export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInv
         <p role="alert">{t('Voorraad kon niet geladen worden.')} <button type="button" className={styles.secondary} onClick={() => { setCatalogFailed(false); setCatalogAttempt(attempt => attempt + 1); }}>{t('Opnieuw')}</button></p>
       ) : <p className={styles.muted} role="status">{t('Laden…')}</p>)}
       {lastMovement && <section className={`${styles.panel} ${styles.inline}`} aria-label={t("Opgeslagen beweging")}>
-        <strong>{t(STOCK_OPERATIONS[lastMovement.move.operation as Operation])} {t('opgeslagen')} · {lastMovement.article.sku || lastMovement.article.id}</strong>
+        <strong>{t(moveLabel(lastMovement.move.operation))} {t('opgeslagen')} · {lastMovement.article.sku || lastMovement.article.id}</strong>
         <button type="button" className={styles.secondary} onClick={() => shareMovement(lastMovement)}>{t("Delen via WhatsApp")}</button>
         {lastMovement.move.photo && <a href={`${api}?movement=${lastMovement.move.id}${demo ? '&demo=1' : ''}`} download={`keyforcars-${lastMovement.move.id}.jpg`}>{t("Foto downloaden")}</a>}
       </section>}
@@ -462,7 +464,7 @@ export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInv
                 }} />
                 <button type="button" className={styles.article} onClick={() => select(article)} aria-pressed={article.id === selected.id}>
                   {article.image ? <img src={article.image} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <Barcode size={22} />}
-                  <span><strong>{article.name}</strong><small>{article.sku || article.id} · {t(inventoryCategory(article)[1])}</small>
+                  <span><strong><PreviewProductName sku={article.sku}>{article.name}</PreviewProductName></strong><small>{article.sku || article.id} · {t(inventoryCategory(article)[1])}</small>
                     {stockReady && <small className={styles.shelfHint}>{(() => {
                       const locations = state.bins.filter(bin => bin.article === article.id);
                       const first = locations[0];
@@ -492,6 +494,7 @@ export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInv
         </section>
 
         <section className={styles.detail} ref={details} aria-label={t("Artikelvoorraad")}>
+          {canEditPrice && <SalePriceEditor key={selected.id} code={selected.id} name={selected.name} />}
           <div className={styles.panel}>
             <div className={styles.listHead}><h2>{t("Bak- en locatie-etiket")}</h2>
               <div className={styles.labelActions}>
@@ -535,7 +538,7 @@ export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInv
             <div className={styles.sectionHeading}><ClipboardList size={20} aria-hidden="true" /><h2>{t("Voorraad boeken")}</h2><StockHelp /></div>
             <div className={styles.bookingProduct}>
               {displayedArticle.image ? <img src={displayedArticle.image} alt="" referrerPolicy="no-referrer" /> : <Package size={24} aria-hidden="true" />}
-              <div><strong>{selected.name}</strong><small>{selected.sku || selected.id}{demo && ` · ${t('Proefvoorraad')}`}</small></div>
+              <div><strong><PreviewProductName sku={selected.sku}>{selected.name}</PreviewProductName></strong><small>{selected.sku || selected.id}{demo && ` · ${t('Proefvoorraad')}`}</small></div>
             </div>
             <div className={styles.formGrid}>
               <label>{t("Beweging")}<select value={operation} onChange={(event) => setOperation(event.target.value as Operation)}>
@@ -570,7 +573,7 @@ export default function KeyForCarsStock({ initialCatalog, demo, view, canLinkInv
           <div className={styles.panel}>
             <h2>{t("Voorraadhistorie")}</h2>
             {moves.length ? <ul className={styles.locations}>{moves.map((move, index) => (
-              <li key={`${move.time}/${index}`}><span>{t(STOCK_OPERATIONS[move.operation as Operation])}{move.shelf && ` · ${move.shelf} / ${move.box}`}</span>
+              <li key={`${move.time}/${index}`}><span>{t(moveLabel(move.operation))}{move.shelf && ` · ${move.shelf} / ${move.box}`}</span>
                 <strong>{stockChange(move, english)}</strong>
                 {move.photo && <a href={`${api}?movement=${move.id}${demo ? '&demo=1' : ''}`} target="_blank" rel="noreferrer">{t("Foto")}</a>}
                 <time dateTime={move.time}>{new Date(move.time).toLocaleString('nl-NL')}</time></li>

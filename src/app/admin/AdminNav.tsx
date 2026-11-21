@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import styles from './admin.module.css';
 import { usePreviewLanguage } from './PreviewLanguage';
-import { IS_KEYFORCARS } from '@/config/install';
+import { IS_KEYFORCARS, WAREHOUSE, installServes } from '@/config/install';
 import type { CrmRole } from '@/lib/crmSession';
 import { inventoryHref, inventoryView } from './voorraad/inventoryViews';
 
@@ -49,7 +49,7 @@ interface Leaf {
   label: string;
 }
 
-interface NavItem {
+export interface NavItem {
   label: string;
   icon: LucideIcon;
   href?: string;
@@ -58,7 +58,24 @@ interface NavItem {
   children?: Leaf[];
 }
 
-const OFFICE_NAV: NavItem[] = [
+export const reportLinks = [
+  { label: 'Prestaties', href: '/admin/rapport' },
+  { label: 'Winst & verbruik', href: '/admin/winst' },
+  { label: 'Rapportage', href: '/admin/rapportage' },
+  { label: 'Advertentieklikken', href: '/admin/attributie' },
+  { label: 'WhatsApp en advertenties', href: '/admin/whatsapp-advertenties' },
+  { label: 'WhatsApp-analyse', href: '/admin/whatsapp-analyse' },
+  { label: 'Klikfraude', href: '/admin/klikfraude' },
+  { label: 'Live', href: '/admin/live' },
+  { label: 'Kantoor', href: '/admin/kantoor' },
+  { label: 'Verkoop & diensten', href: '/admin/rapport/verkoop' },
+  { label: 'Voorraadstand', href: '/admin/rapport/voorraad', warehouse: true },
+  { label: 'Voorraadbewegingen', href: '/admin/rapport/voorraadbewegingen', warehouse: true },
+  { label: 'Webshopmarge', href: '/admin/winst/webshop', warehouse: true },
+  { label: 'Alle rapporten', href: '/admin/rapporten' },
+].filter(link => (!link.warehouse || WAREHOUSE) && installServes(link.href));
+
+export const OFFICE_NAV: NavItem[] = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/admin/overzicht' },
   { label: 'Leads', icon: Inbox, href: '/admin/leads' },
   { label: 'Gesprekken', icon: PhoneCall, href: '/admin/gesprekken', ai: true },
@@ -94,25 +111,13 @@ const OFFICE_NAV: NavItem[] = [
       { href: '/admin/monteurtarieven', label: 'Monteurtarieven' },
     ],
   },
-  {
-    label: 'Rapporten',
-    icon: BarChart3,
-    children: [
-      { href: '/admin/rapport', label: 'Prestaties' },
-      { href: '/admin/winst', label: 'Winst & verbruik' },
-      { href: '/admin/rapportage', label: 'Rapportage' },
-      { href: '/admin/attributie', label: 'Advertentieklikken' },
-      { href: '/admin/whatsapp-advertenties', label: 'WhatsApp en advertenties' },
-      { href: '/admin/klikfraude', label: 'Klikfraude' },
-      { href: '/admin/live', label: 'Live' },
-      { href: '/admin/kantoor', label: 'Kantoor' },
-    ],
-  },
+  // One merged reports page with tabs; the detail pages are linked from inside it.
+  { label: 'Rapporten', icon: BarChart3, children: reportLinks },
   { label: 'Netwerk', icon: MessageSquare, href: '/admin/netwerk' },
   { label: 'Instellingen', icon: Settings, href: '/admin/instellingen' },
 ];
 
-const MONTEUR_NAV: NavItem[] = [
+export const MONTEUR_NAV: NavItem[] = [
   { label: 'Overzicht', icon: LayoutDashboard, href: '/admin/overzicht' },
   { label: 'Vandaag', icon: Truck, href: '/admin/vandaag' },
   { label: 'Aanbod', icon: Handshake, href: '/admin/aanbod' },
@@ -196,14 +201,7 @@ const KEYFORCARS_NAV: NavItem[] = [
   {
     label: 'Rapporten',
     icon: BarChart3,
-    children: [
-      { href: '/admin/rapport', label: 'Prestaties' },
-      { href: '/admin/winst', label: 'Winst & verbruik' },
-      { href: '/admin/rapportage', label: 'Rapportage' },
-      { href: '/admin/attributie', label: 'Advertentieklikken' },
-      { href: '/admin/whatsapp-advertenties', label: 'WhatsApp en advertenties' },
-      { href: '/admin/klikfraude', label: 'Klikfraude' },
-    ],
+    children: reportLinks,
   },
   { label: 'Integraties', icon: Plug, href: '/admin/integraties' },
   { label: 'Boekhoudtest', icon: BadgeCheck, href: '/admin/boekhoudtest' },

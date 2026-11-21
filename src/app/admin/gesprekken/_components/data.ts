@@ -4,9 +4,9 @@ import type { Conversation } from '../ConversationConsole';
 export type Group = 'Vandaag' | 'Gisteren' | 'Eerder';
 
 export const OUTCOME_LABEL: Record<string, string> = { success: 'Gelukt', failure: 'Mislukt', unknown: 'Onbekend' };
-export const CHANNEL_LABEL: Record<string, string> = { phone: 'Telefoon', whatsapp: 'WhatsApp', sms: 'SMS', unknown: 'Onbekend' };
+export const CHANNEL_LABEL: Record<string, string> = { phone: 'Telefoon', whatsapp: 'WhatsApp', sms: 'SMS', email: 'E-mail', form: 'Websiteformulier', webchat: 'Webchat', unknown: 'Overig' };
 
-export const displayName = (c: Conversation) => c.lead?.name || c.phone || 'Onbekend nummer';
+export const displayName = (c: Conversation) => c.lead?.name || c.thread?.name || c.phone || c.thread?.email || 'Onbekend nummer';
 
 export function groupOf(createdAt: string, now: number): Group {
   // Compare calendar dates in Europe/Amsterdam, not process-local time — the server runs UTC, the browser Amsterdam.
@@ -23,11 +23,11 @@ export function shortTime(iso: string, now: number) {
   if (min < 60) return `${min}m`;
   if (min < 24 * 60) return `${Math.round(min / 60)}u`;
   if (min < 7 * 24 * 60) return `${Math.round(min / (24 * 60))}d`;
-  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+  return d.toLocaleDateString('nl-NL', { timeZone:'Europe/Amsterdam', day: 'numeric', month: 'short' });
 }
 
-export const longDate = (iso: string) => new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
-export const clock = (iso: string) => new Date(iso).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+export const longDate = (iso: string) => new Date(iso).toLocaleDateString('nl-NL', { timeZone:'Europe/Amsterdam', day: 'numeric', month: 'long', year: 'numeric' });
+export const clock = (iso: string) => new Date(iso).toLocaleTimeString('nl-NL', { timeZone:'Europe/Amsterdam', hour: '2-digit', minute: '2-digit' });
 
 export function duration(secs: number | null) {
   if (!secs) return null;
@@ -37,6 +37,7 @@ export function duration(secs: number | null) {
 
 /** First sentence of the summary, or the outcome: what the list shows as the "subject". */
 export function subjectOf(c: Conversation) {
+  if (c.thread?.subject) return c.thread.subject;
   const first = c.summary?.split(/(?<=[.!?])\s/)[0]?.trim();
   return first || (c.outcome ? OUTCOME_LABEL[c.outcome] ?? c.outcome : 'Gesprek');
 }

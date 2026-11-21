@@ -1,4 +1,5 @@
-import { IS_KEYFORCARS } from '@/config/install';
+import { PreviewText } from '@/app/admin/PreviewLanguage';
+import { IS_KEYFORCARS, STUDIO_UI } from '@/config/install';
 import { getCustomer } from '@/lib/kfcReceivables';
 import KfcCustomerCard from '../KfcCustomerCard';
 import Link from 'next/link';
@@ -10,6 +11,7 @@ import { CalendarPlus, MessageCircle, Phone } from 'lucide-react';
 import { waLink } from '@/lib/whatsapp';
 import { getBrandLogo } from '@/lib/brandLogos';
 import { sourceLabel } from '../../overzicht/dashboardData';
+import StudioKlantKaart, { type Vehicle } from '../_studio/StudioKlantKaart';
 import k from '../klanten-v2.module.css';
 import EraseButton from './EraseButton';
 
@@ -110,6 +112,27 @@ export default async function KlantPage({
   const wa = waLink(phone, `Goedendag${customer.name ? ` ${String(customer.name).split(' ')[0]}` : ''}, hier Autosleutel24. `);
   const jobsDone = (jobs ?? []).filter((j) => j.status === 'afgerond').length;
 
+  // Same reads, same timeline, same erase button — shadcn cards instead of CSS modules.
+  if (STUDIO_UI) {
+    return (
+      <StudioKlantKaart
+        phone={phone}
+        name={name}
+        email={(customer.email as string | null) ?? null}
+        postcode={(customer.postcode as string | null) ?? null}
+        firstSeen={customer.first_seen as string}
+        totalValue={Number(customer.total_value ?? 0)}
+        consentMarketing={Boolean(customer.consent_marketing)}
+        consentAt={(customer.consent_at as string | null) ?? null}
+        leadCount={(leads ?? []).length}
+        jobsDone={jobsDone}
+        vehicles={(vehicles ?? []) as unknown as Vehicle[]}
+        events={events}
+        wa={wa}
+      />
+    );
+  }
+
   return (
     <>
       <Link href="/admin/klanten" className={k.backLink}>‹ Alle klanten</Link>
@@ -127,9 +150,9 @@ export default async function KlantPage({
           </span>
         </div>
         <div className={k.heroActions}>
-          <a href={`tel:${phone}`} className={k.btnGhost}><Phone size={16} /> Bellen</a>
+          <a href={`tel:${phone}`} className={k.btnGhost}><Phone size={16} /> <PreviewText>{"Bellen"}</PreviewText></a>
           {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className={k.btnGhost}><MessageCircle size={16} /> WhatsApp</a>}
-          <Link href="/admin/jobs/nieuw" className={k.btnPrimary}><CalendarPlus size={16} /> Klus inplannen</Link>
+          <Link href="/admin/jobs/nieuw" className={k.btnPrimary}><CalendarPlus size={16} /> <PreviewText>{"Klus inplannen"}</PreviewText></Link>
         </div>
       </header>
 
@@ -137,7 +160,7 @@ export default async function KlantPage({
         <div><span>Klant sinds</span><b>{DATE.format(new Date(customer.first_seen as string))}</b></div>
         <div><span>Aanvragen</span><b>{(leads ?? []).length}</b></div>
         <div><span>Klussen afgerond</span><b>{jobsDone}</b></div>
-        <div><span>Omzet</span><b>{MONEY.format(Number(customer.total_value ?? 0))}</b></div>
+        <div><span><PreviewText>{"Omzet"}</PreviewText></span><b>{MONEY.format(Number(customer.total_value ?? 0))}</b></div>
       </div>
 
       <div className={k.cols}>

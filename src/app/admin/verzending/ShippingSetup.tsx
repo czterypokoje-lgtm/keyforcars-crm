@@ -5,6 +5,7 @@ import { FilePlus2, Package, Printer, Truck } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { PageHead, ui } from '../_ui';
 import { usePreviewLanguage } from '../PreviewLanguage';
+import { BRAND } from '@/config/install';
 import styles from './shipping.module.css';
 
 const countries = {
@@ -79,7 +80,7 @@ export default function ShippingSetup() {
   return (
     <section className={styles.page}>
       <PageHead
-        title={t('Verzending')}
+        title={t('Zending maken')}
         sub={local('Kies een vervoerder voor een zending vanuit Nederland.', 'Choose a carrier for a shipment from the Netherlands.')}
         actions={<Link href="/admin/facturen/nieuw" className={ui.btn}><FilePlus2 size={16} aria-hidden="true" />{t('Nieuwe factuur')}</Link>}
       />
@@ -90,7 +91,7 @@ export default function ShippingSetup() {
           <button type="button" className={ui.btn} onClick={() => {
             const example = {
               weight: '0.75', reference: 'KFC-TEST',
-              'sender-name': 'KeyForCars', 'sender-street': 'Teststraat 1', 'sender-postcode': '1000 AA', 'sender-city': 'Amsterdam',
+              'sender-name': BRAND.name, 'sender-street': 'Teststraat 1', 'sender-postcode': '1000 AA', 'sender-city': 'Amsterdam',
               'recipient-name': 'Testontvanger', 'recipient-street': 'Voorbeeldstraat 2',
               'recipient-postcode': { NL: '2000 AA', BE: '1000', DE: '10115' }[destination],
               'recipient-city': { NL: 'Haarlem', BE: 'Brussel', DE: 'Berlin' }[destination],
@@ -138,7 +139,7 @@ export default function ShippingSetup() {
             <legend>{section === 'sender' ? local('Afzender (Nederland)', 'Sender (Netherlands)') : local('Ontvanger', 'Recipient')}</legend>
             {addressFields.map(([field, nl, en, autocomplete]) => <label key={field}>{local(nl, en)}
               <input className={ui.input} name={`${section}-${field}`} autoComplete={`section-${section} ${autocomplete}`}
-                defaultValue={section === 'sender' && field === 'name' ? 'KeyForCars' : undefined} maxLength={120} required />
+                defaultValue={section === 'sender' && field === 'name' ? BRAND.name : undefined} maxLength={120} required />
             </label>)}
           </fieldset>)}
           {invalidAddress && <p role="alert">{local('Vul alle verplichte adres- en afhaalvelden in.', 'Complete all required address and pickup fields.')}</p>}

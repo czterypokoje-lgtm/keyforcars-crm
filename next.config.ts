@@ -47,6 +47,9 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_CRM_READONLY: crmReadonly,
     // Inlined so client components (the menu) know which install this is.
     CRM_INSTALL: process.env.CRM_INSTALL ?? '',
+    // Same for the UI switch (src/config/install.ts STUDIO_UI): decided per deployment at build time.
+    CRM_UI: process.env.CRM_UI ?? '',
+    CRM_WAREHOUSE: process.env.CRM_WAREHOUSE ?? '',
   },
   /*
    * pdf-parse pulls in @napi-rs/canvas, a native compiled binary — the class
@@ -83,9 +86,17 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingIncludes: {
     '/api/admin/invoice': ['./node_modules/pdfjs-dist/**/*.mjs', './node_modules/pdf-parse/dist/**/*'],
-    // KeyForCars product profiles: read with readFileSync at runtime (src/lib/productProfiles.ts).
-    '/api/admin/voorraad-local': ['./src/data/keyforcars-profiles.json'],
-    '/admin/voorraad/**': ['./src/data/keyforcars-profiles.json'],
+    /*
+     * Product profiles: read with readFileSync at runtime
+     * (src/lib/productProfiles.ts), so the tracer sees no static import. Both
+     * installs' sources are listed because which one is read is decided by
+     * CRM_INSTALL at build time — KeyForCars's built profile file, or, on
+     * Autosleutel24, the key catalogue the profiles are derived from
+     * (src/lib/stockCatalog.ts).
+     */
+    '/api/admin/voorraad-local': ['./src/data/keyforcars-profiles.json', './src/lib/catalog.json'],
+    '/api/admin/product-names': ['./src/data/keyforcars-profiles.json', './src/lib/catalog.json'],
+    '/admin/voorraad/**': ['./src/data/keyforcars-profiles.json', './src/lib/catalog.json'],
   },
   /*
    * The mirror image of the problem above, and it broke a deploy outright:
@@ -484,6 +495,10 @@ const nextConfig: NextConfig = {
         source: '/admin/voorraad',
         headers: [{ key: 'Permissions-Policy', value: 'camera=(self), microphone=(), geolocation=(self), payment=(self)' }],
       },
+      ...((process.env.KFC_DEMO_MODE === '1' || (process.env.NODE_ENV === 'development' && process.env.KFC_SHIPPING_TEST === '1')) ? [{
+        source: '/api/admin/shipping-test/label',
+        headers: [{ key: 'X-Frame-Options', value: 'SAMEORIGIN' }],
+      }] : []),
     ];
   },
   async rewrites() {

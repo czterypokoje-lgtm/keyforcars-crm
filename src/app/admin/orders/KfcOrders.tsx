@@ -3,14 +3,15 @@ import { Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { PreviewText } from '../PreviewLanguage';
+import { PreviewProductName, PreviewText, PreviewStyledInput } from '../PreviewLanguage';
 import { SHOPS, sampleOrders, type OrderStatus, type SampleOrder } from '@/lib/kfcSampleOrders';
-import { listShopOrders, shopOrdersExist } from '@/lib/kfcOrders';
+import { listShopOrders, sampleShopOrdersExist, shopOrdersExist } from '@/lib/kfcOrders';
 import { WOO_SHOPS, wooConfigured, type WooShop } from '@/lib/kfcWoo';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
-import { FulfilmentBadge, ImportPanel } from '../bestellingen/OrderParts';
+import { IS_KEYFORCARS } from '@/config/install';
+import { OWN_SHOP } from '@/lib/kfcOwnShop';
+import { FulfilmentBadge, ImportPanel, OwnImportPanel } from '../bestellingen/OrderParts';
 import type { Fulfilment } from '@/lib/kfcOrders';
 
 /**
@@ -38,14 +39,17 @@ function Filter({ on, href, children }: { on: boolean; href: string; children: R
 
 type Row = SampleOrder & { id?: string; fulfilment?: Fulfilment };
 
-export default async function KfcOrders({ shop, status, q, requestedPage, canImport = false }: { shop?: string; status?: string; q?: string; requestedPage?: string; canImport?: boolean }) {
+export default async function KfcOrders({ shop, status, q, requestedPage, canImport = false, canImportOwn = false }: { shop?: string; status?: string; q?: string; requestedPage?: string; canImport?: boolean; canImportOwn?: boolean }) {
+  const dispatched = status === 'dispatched';
   const query = (q ?? '').trim().toUpperCase();
   const requested = Number(requestedPage);
-  const live = await shopOrdersExist().catch(() => false);
+  const [live, hasSamples] = await Promise.all([shopOrdersExist().catch(() => false), sampleShopOrdersExist().catch(() => false)]);
+  // The sample orders are KeyForCars's three shops; Autosleutel24 shows its own empty ledger instead.
+  const showSampleNotice = IS_KEYFORCARS && (!live || hasSamples);
   let shown: Row[]; let total: number; let page: number;
-  if (live) {
+  if (live || !IS_KEYFORCARS) {
     page = Number.isInteger(requested) && requested > 0 ? requested : 1;
-    const result = await listShopOrders({ shop, status, q: query, page, limit: LIMIT });
+    const result = await listShopOrders({ shop, status: dispatched ? undefined : status, fulfilment: dispatched ? 'shipped' : undefined, q: query, page, limit: LIMIT });
     total = result.total;
     shown = result.orders.map((o) => ({
       id: o.id, fulfilment: o.fulfilment, number: o.number, shop: o.shop as SampleOrder['shop'], created: o.created_at,
@@ -68,6 +72,15 @@ export default async function KfcOrders({ shop, status, q, requestedPage, canImp
     shop: s, configured: wooConfigured(s),
     orders: (await createSupabaseAdminClient().from('kfc_shop_orders').select('id', { count: 'exact', head: true }).eq('shop', s)).count ?? 0,
   }))) : [];
+  // Autosleutel24: one own webshop, so one panel with its order count and when it last ran.
+  const ownImport = canImportOwn ? await (async () => {
+    const db = createSupabaseAdminClient();
+    const [count, run] = await Promise.all([
+      db.from('kfc_shop_orders').select('id', { count: 'exact', head: true }).eq('shop', OWN_SHOP),
+      db.from('kfc_import_runs').select('finished_at').eq('shop', OWN_SHOP).not('finished_at', 'is', null).order('finished_at', { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    return { orders: count.count ?? 0, last: (run.data?.finished_at as string | null) ?? null };
+  })() : null;
 
   const link = (change: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
@@ -81,26 +94,30 @@ export default async function KfcOrders({ shop, status, q, requestedPage, canImp
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight"><PreviewText>Bestellingen</PreviewText></h1>
-          <p className="text-muted-foreground text-sm"><PreviewText>Alle drie de webshops</PreviewText> · {orders.length}</p>
+          <p className="text-muted-foreground text-sm">{SHOPS.length > 1 ? <PreviewText>Alle drie de webshops</PreviewText> : SHOPS[0]} · {orders.length}</p>
         </div>
         <form method="get" action="/admin/orders" className="relative w-full max-w-xs">
           {shop && <input type="hidden" name="shop" value={shop} />}
           {status && <input type="hidden" name="status" value={status} />}
           <Search className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
-          <Input type="search" name="q" defaultValue={q} placeholder="Zoek op ordernummer of SKU" aria-label="Zoek bestelling" className="pl-8" />
+          <PreviewStyledInput type="search" name="q" defaultValue={q} placeholder="Zoek op ordernummer of SKU" aria-label="Zoek bestelling" className="pl-8" />
         </form>
       </div>
 
       {canImport && <div className="max-md:order-last"><ImportPanel shops={importShops} /></div>}
-      {!live && <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs"><PreviewText>Voorbeeldbestellingen. Echte producten en prijzen, verzonnen klanten en aantallen.</PreviewText></p>}
+      {ownImport && <div className="max-md:order-last"><OwnImportPanel orders={ownImport.orders} last={ownImport.last} /></div>}
+      {showSampleNotice && <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-2 text-xs"><PreviewText>Voorbeeldbestellingen. Echte producten en prijzen, verzonnen klanten en aantallen.</PreviewText></p>}
 
       <div className="flex flex-wrap gap-2">
-        <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg border p-1">
-          <Filter on={!shop} href={link({ shop: undefined })}><PreviewText>Alle</PreviewText></Filter>
-          {SHOPS.map((s) => <Filter key={s} on={shop === s} href={link({ shop: s })}>{s}</Filter>)}
-        </div>
+        {SHOPS.length > 1 && (
+          <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg border p-1">
+            <Filter on={!shop} href={link({ shop: undefined })}><PreviewText>Alle</PreviewText></Filter>
+            {SHOPS.map((s) => <Filter key={s} on={shop === s} href={link({ shop: s })}>{s}</Filter>)}
+          </div>
+        )}
         <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg border p-1">
           <Filter on={!status} href={link({ status: undefined })}><PreviewText>Elke status</PreviewText></Filter>
+          <Filter on={dispatched} href={link({ status: 'dispatched' })}><PreviewText>Verzonden in CRM</PreviewText></Filter>
           {(Object.keys(STATUS) as OrderStatus[]).map((s) => <Filter key={s} on={status === s} href={link({ status: s })}><PreviewText>{STATUS[s].label}</PreviewText></Filter>)}
         </div>
       </div>
@@ -116,7 +133,7 @@ export default async function KfcOrders({ shop, status, q, requestedPage, canImp
                 </div>
                 <div className="text-muted-foreground text-xs">{order.shop} · {WHEN.format(new Date(order.created))} · {order.country}</div>
                 <div className="text-xs">
-                  {order.lines.map((line) => <div key={line.sku} className="truncate">{line.quantity} × <span className="font-medium">{line.sku}</span> <span className="text-muted-foreground">{line.name.slice(0, 40)}</span></div>)}
+                  {order.lines.map((line) => <div key={line.sku} className="truncate">{line.quantity} × <span className="font-medium">{line.sku}</span> <span className="text-muted-foreground"><PreviewProductName sku={line.sku} limit={40}>{line.name}</PreviewProductName></span></div>)}
                 </div>
                 <div className="flex flex-wrap gap-1 pt-0.5"><Badge variant={STATUS[order.status].variant}><PreviewText>{STATUS[order.status].label}</PreviewText></Badge>{order.fulfilment && order.fulfilment !== 'external' && <FulfilmentBadge value={order.fulfilment} />}</div>
               </li>
@@ -145,7 +162,7 @@ export default async function KfcOrders({ shop, status, q, requestedPage, canImp
                     {order.lines.map((line) => (
                       <div key={line.sku} className="text-sm">
                         {line.quantity} × <Link prefetch={false} className="font-medium underline-offset-4 hover:underline" href={`/admin/voorraad/p/${encodeURIComponent(line.sku)}`}>{line.sku}</Link>{' '}
-                        <span className="text-muted-foreground">{line.name.slice(0, 48)}</span>
+                        <span className="text-muted-foreground"><PreviewProductName sku={line.sku} limit={48}>{line.name}</PreviewProductName></span>
                       </div>
                     ))}
                   </TableCell>

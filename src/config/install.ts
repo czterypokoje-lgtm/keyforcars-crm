@@ -20,6 +20,24 @@ export type Install = 'autosleutel24' | 'keyforcars';
 export const INSTALL: Install = process.env.CRM_INSTALL === 'keyforcars' ? 'keyforcars' : 'autosleutel24';
 export const IS_KEYFORCARS = INSTALL === 'keyforcars';
 
+/**
+ * The shadcn shell and the Studio screens (leads dashboard, chat). Always on
+ * for KeyForCars. Autosleutel24 opts in per deployment with CRM_UI=studio, so
+ * the live CRM keeps its old look until that variable is set and gets it back
+ * the moment it is removed. Screens that read KeyForCars-only tables stay
+ * behind IS_KEYFORCARS regardless of this flag.
+ */
+export const STUDIO_UI = IS_KEYFORCARS || process.env.CRM_UI === 'studio';
+
+/**
+ * The warehouse and e-commerce modules (stock ledger, pick list, purchasing,
+ * shipping, webshop orders, bank import, agent centre, staff assistant).
+ * Always on for KeyForCars; Autosleutel24 opts in per deployment with
+ * CRM_WAREHOUSE=1 once its database has the kfc_* migrations. Like CRM_UI it
+ * is fixed at build time (next.config env), so a rebuild is needed to change it.
+ */
+export const WAREHOUSE = IS_KEYFORCARS || process.env.CRM_WAREHOUSE === '1';
+
 export const BRAND = IS_KEYFORCARS
   ? { name: 'KeyForCars', crm: 'KeyForCars CRM', staff: 'Alleen voor medewerkers van KeyForCars.' }
   : { name: 'Autosleutel24', crm: 'Autosleutel24 CRM', staff: 'Alleen voor medewerkers en monteurs van Autosleutel24.' };
@@ -45,6 +63,8 @@ const KEYFORCARS_OUTSIDE = [
   '/vendor', // barcode decoder .wasm
   '/api/woo', // WooCommerce order webhooks (signature-checked in the route)
   '/api/cron/kfc-reconcile', // nightly import check (CRON_SECRET)
+  '/api/agent/workshop', // ElevenLabs Workshop Service tools (KFC_WORKSHOP_AGENT_TOKEN); other /api/agent routes stay closed
+  '/api/webhooks', // Meta WhatsApp + Resend inbound (signature-checked in the routes)
   '/_next', // dev reload
   '/__nextjs_original-stack-frame', // dev error overlay
 ];

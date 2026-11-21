@@ -1,11 +1,16 @@
 'use client';
 
+import { PreviewText } from '@/app/admin/PreviewLanguage';
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ui } from '../_ui';
 import styles from './invoice-form.module.css';
+import type { JobBillingRecipient } from '@/lib/jobAccounts';
+import type { JobInvoiceDraft } from '@/lib/jobInvoiceDraft';
+import type { JobInvoiceLineSource } from '@/lib/jobInvoiceSources';
+import type { PreviousClientOption } from './nieuw/_components/data';
 
-interface Line {
+interface Line extends Partial<JobInvoiceLineSource> {
   description: string;
   quantity: string;
   unitPrice: string;
@@ -62,6 +67,9 @@ export default function InvoiceForm({
   showTechnicianPicker,
   biller,
   invoiceId,
+  jobId,
+  jobDraft,
+  billing,
   initial,
   previousClients,
   preview = false,
@@ -73,8 +81,11 @@ export default function InvoiceForm({
   biller: { name: string; email: string; phone: string; kvk: string; btw: string; iban: string };
   /** Present only when editing an existing invoice. */
   invoiceId?: string;
+  jobId?: string;
+  jobDraft?: JobInvoiceDraft;
+  billing?: JobBillingRecipient;
   initial?: InvoiceFormValues;
-  previousClients?: any[];
+  previousClients?: PreviousClientOption[];
   preview?: boolean;
   customers?: { id: string; company: string; email: string | null; phone: string | null; street: string | null; postcode: string | null; city: string | null; vat_number: string | null }[];
   initialCustomerId?: string | null;
@@ -109,16 +120,16 @@ export default function InvoiceForm({
   const [billerBtw, setBillerBtw] = useState(initial?.billerBtw ?? biller.btw);
   const [billerIban, setBillerIban] = useState(initial?.billerIban ?? biller.iban);
 
-  const [clientName, setClientName] = useState(initial?.clientName ?? '');
-  const [clientStreet, setClientStreet] = useState(initial?.clientStreet ?? '');
-  const [clientPostcode, setClientPostcode] = useState(initial?.clientPostcode ?? '');
-  const [clientCity, setClientCity] = useState(initial?.clientCity ?? '');
-  const [clientEmail, setClientEmail] = useState(initial?.clientEmail ?? '');
-  const [clientPhone, setClientPhone] = useState(initial?.clientPhone ?? '');
-  const [clientBtw, setClientBtw] = useState(initial?.clientBtw ?? '');
+  const [clientName, setClientName] = useState(initial?.clientName ?? billing?.company ?? jobDraft?.customerName ?? '');
+  const [clientStreet, setClientStreet] = useState(initial?.clientStreet ?? billing?.street ?? '');
+  const [clientPostcode, setClientPostcode] = useState(initial?.clientPostcode ?? billing?.postcode ?? '');
+  const [clientCity, setClientCity] = useState(initial?.clientCity ?? billing?.city ?? '');
+  const [clientEmail, setClientEmail] = useState(initial?.clientEmail ?? billing?.email ?? '');
+  const [clientPhone, setClientPhone] = useState(initial?.clientPhone ?? billing?.phone ?? '');
+  const [clientBtw, setClientBtw] = useState(initial?.clientBtw ?? billing?.vat_number ?? '');
 
-  const [technicianId, setTechnicianId] = useState(initial?.technicianId ?? '');
-  const [lines, setLines] = useState<Line[]>(initial?.lines?.length ? initial.lines : [{ ...EMPTY_LINE }]);
+  const [technicianId, setTechnicianId] = useState(initial?.technicianId ?? jobDraft?.technicianId ?? '');
+  const [lines, setLines] = useState<Line[]>(initial?.lines?.length ? initial.lines : jobDraft ? jobDraft.rows.map((row) => ({ ...EMPTY_LINE, ...row, quantity: String(row.quantity), unitPrice: row.unitPrice == null ? '' : String(row.unitPrice) })) : [{ ...EMPTY_LINE }]);
   const [creditApplied, setCreditApplied] = useState(initial?.creditApplied ?? '0');
   const [notes, setNotes] = useState(initial?.notes ?? '');
 
@@ -196,6 +207,10 @@ export default function InvoiceForm({
       setError('Naam van de klant is verplicht.');
       return;
     }
+    if (lines.some((line) => line.job_line_kind && line.unitPrice.trim() === '')) {
+      setError('Vul de prijs in voor elke klusregel.');
+      return;
+    }
     const goodLines = lines.filter((l) => l.description.trim() && num(l.unitPrice) >= 0 && num(l.quantity) > 0);
     if (!goodLines.length) {
       setError('Voeg minstens één regel toe met een omschrijving, aantal en prijs.');
@@ -222,6 +237,7 @@ export default function InvoiceForm({
       client_phone: clientPhone,
       client_btw: clientBtw,
       technician_id: technicianId || null,
+      job_id: jobId,
       credit_applied: creditApplied,
       notes,
       lines: goodLines.map((l) => ({
@@ -230,6 +246,8 @@ export default function InvoiceForm({
         unitPrice: num(l.unitPrice),
         discount: num(l.discount),
         vatRate: num(l.vatRate),
+        job_stock_id: l.job_stock_id,
+        job_line_kind: l.job_line_kind,
       })),
     };
 
@@ -374,11 +392,11 @@ export default function InvoiceForm({
         )}
         <div className={styles.linesHead}>
           <span>Beschrijving</span>
-          <span>Aantal</span>
-          <span>Prijs</span>
+          <span><PreviewText>{"Aantal"}</PreviewText></span>
+          <span><PreviewText>{"Prijs"}</PreviewText></span>
           <span>Korting</span>
           <span>Btw %</span>
-          <span className={styles.right}>Totaal</span>
+          <span className={styles.right}><PreviewText>{"Totaal"}</PreviewText></span>
           <span />
         </div>
         {lines.map((line, i) => {
@@ -472,7 +490,7 @@ export default function InvoiceForm({
               <span>{MONEY.format(totals.subtotal)}</span>
             </div>
             <div className={styles.totalsLine}>
-              <span>Btw</span>
+              <span><PreviewText>{"Btw"}</PreviewText></span>
               <span>{MONEY.format(totals.vat)}</span>
             </div>
             {totals.credit > 0 && (
@@ -482,7 +500,7 @@ export default function InvoiceForm({
               </div>
             )}
             <div className={styles.totalsLineFinal}>
-              <span>Totaal</span>
+              <span><PreviewText>{"Totaal"}</PreviewText></span>
               <span>{MONEY.format(totals.total)}</span>
             </div>
           </div>
