@@ -58,3 +58,4 @@ google_ads_conversions.csv
 
 # KeyForCars stock pilot: local counts and photos, never commit
 local-data/
+video/out/
